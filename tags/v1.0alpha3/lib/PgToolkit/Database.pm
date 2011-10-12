@@ -1,0 +1,212 @@
+package PgToolkit::Database;
+
+use parent qw(PgToolkit::Class);
+
+use strict;
+use warnings;
+
+=head1 NAME
+
+B<PgToolkit::Database> - a database abstract class.
+
+=head1 SYNOPSIS
+
+	package SomeDatabase;
+
+	use parent qw(PgToolkit::Database);
+
+	sub init {
+		my ($self, %arg_hash) = @_;
+
+		$self->SUPER::init(%arg_hash);
+
+		# some initialization
+
+		return;
+	}
+
+	sub execute {
+		# some implementation
+	}
+
+	1;
+
+=head1 DESCRIPTION
+
+B<PgToolkit::Database> is a base class for database adapters.
+
+=head3 Constructor arguments
+
+=over 4
+
+=item C<dbname>
+
+=back
+
+=cut
+
+sub init {
+	my ($self, %arg_hash) = @_;
+
+	$self->{'_dbname'} = $arg_hash{'dbname'};
+
+	return;
+}
+
+=head1 METHODS
+
+=head2 B<execute()>
+
+Executes an SQL.
+
+The method must be implemented in derivative classes.
+
+=head3 Arguments
+
+=over 4
+
+=item C<sql>
+
+an SQL string.
+
+=back
+
+=head3 Returns
+
+An array of arrays representing the result.
+
+=head3 Throws
+
+=over 4
+
+=item C<DatabaseError>
+
+when the database raised an error during execution of the SQL.
+
+=back
+
+=cut
+
+sub execute {
+	die('NotImplementedError');
+}
+
+=head2 B<get_adapter_name()>
+
+Returns the name of the adapter.
+
+=head3 Returns
+
+A string representing the name.
+
+=cut
+
+sub get_adapter_name {
+	die('NotImplementedError');
+}
+
+=head2 B<get_dbname()>
+
+Returns the database name.
+
+=head3 Returns
+
+A string with the name.
+
+=cut
+
+sub get_dbname {
+	my $self = shift;
+
+	return $self->{'_dbname'};
+}
+
+=head2 B<_get_escaped_dbname()>
+
+Returns an escaped database name.
+
+=head3 Returns
+
+A database name string with all the non-word characters escaped.
+
+=cut
+
+sub _get_escaped_dbname {
+	my $self = shift;
+
+	my $result = $self->{'_dbname'};
+	$result =~ s/(\W)/\\$1/g;
+
+	return $result;
+}
+
+=head2 B<quote_ident()>
+
+=head3 Arguments
+
+=over 4
+
+=item C<string>
+
+=back
+
+=head3 Returns
+
+A quoted indentifier string.
+
+=head3 Throws
+
+=over 4
+
+=item C<DatabaseError>
+
+when nothing to ident.
+
+=back
+
+=cut
+
+sub quote_ident {
+	my ($self, %arg_hash) = @_;
+
+	if (not $arg_hash{'string'}) {
+		die('DatabaseError Nothing to ident.');
+	}
+
+	return $self->_quote_ident(%arg_hash);
+}
+
+sub _quote_ident {
+	my ($self, %arg_hash) = @_;
+
+	my $result = $self->execute(
+		sql => 'SELECT quote_ident(\''.$arg_hash{'string'}.'\')');
+
+	return $result->[0]->[0];
+}
+
+=head1 SEE ALSO
+
+=over 4
+
+=item L<PgToolkit::Class>
+
+=back
+
+=head1 LICENSE AND COPYRIGHT
+
+Copyright 2010-2011 postgresql-consulting.com
+
+TODO Licence boilerplate
+
+=head1 AUTHOR
+
+=over 4
+
+=item L<Sergey Konoplev|mailto:sergey.konoplev@postgresql-consulting.com>
+
+=back
+
+=cut
+
+1;
