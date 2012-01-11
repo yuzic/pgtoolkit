@@ -1,0 +1,59 @@
+PgToolkit from PostgreSQL-Consulting.com
+
+PgToolkit is a set of scripts and instructions for PostgreSQL database
+management. Initially it was an internal stuff of the
+PostgreSQL-Consulting.com company. However, some time ago we decided
+to share our experience with public and started to make a box version
+from this.
+
+There are two ways of deploying and using the tools. The first and the
+easiest one is to get the latest version of the autonomous scripts
+archive from the PgToolkit project's site on Google Code
+http://code.google.com/p/pgtoolkit/. Unpack it on the destination
+machine and just use. These scripts are packed with all the required
+dependencies so you need the Perl interpreter installed only. Another
+way is to checkout the source code from the mentioned above site. All
+the scripts you will find in the bin/ directory. Before using any of
+them the PERL5LIB environment variable must be set to point to the
+lib/ directory.
+
+To get more information about any tool run it with the --man option.
+
+Currently there is the only tool we have prepared for publishing:
+
+- pg_compactor - a PostgreSQL table bloat reducing tool.
+
+We have not adapted any instructions to the publication yet but they
+are comming soon.
+
+Release v1.0alpha7:
+
+- reworked reindex to be performed in any case when a table has been
+  compacted or it has not (after the last iteration)
+- fixed the query for testing "always" and "replica" triggers
+- refactored the logic of bloat statistics to lower the amount of
+  heavy pgstattuple calls
+- fixed the final statistics
+- added bloat statistics requests duration.
+
+Release v1.0alpha6:
+
+- refactored out useless resource consuming pgstattuple calls
+- added DEBUG0 and DEBUG1 logging levels and applied to SQL queries
+  logging
+- turned off server side prepares for DBI drivers
+- made some minor changes.
+
+Release v1.0alpha5
+
+Release v1.0alpha4
+
+Release v1.0alpha3
+
+Release v1.0alpha2
+
+Release v1.0alpha1
+
+TODO License boilerplate
+
+
