@@ -1,0 +1,986 @@
+# -*- mode: Perl; -*-
+package PgToolkit::CompactorTableTest;
+
+use base qw(PgToolkit::Test);
+
+use strict;
+use warnings;
+
+use Test::MockObject;
+use Test::More;
+
+use PgToolkit::DatabaseStub;
+
+use PgToolkit::Logger;
+
+sub setup : Test(setup) {
+	my $self = shift;
+
+	$self->{'database'} = PgToolkit::DatabaseStub->new(dbname => 'dbname');
+
+	$self->{'table_compactor_constructor'} = sub {
+		PgToolkit::Compactor::TableStub->new(
+			database => $self->{'database'},
+			logger => PgToolkit::Logger->new(
+				level => 'info', err_handle => \*STDOUT),
+			dry_run => 0,
+			schema_name => 'schema',
+			table_name => 'table',
+			min_page_count => 100,
+			min_free_percent => 15,
+			max_pages_per_round => 5,
+			no_initial_vacuum => 0,
+			no_routine_vacuum => 0,
+			no_final_analyze => 0,
+			delay_constant => 1,
+			delay_ratio => 0.5,
+			force => 0,
+			reindex => 0,
+			print_reindex_queries => 0,
+			progress_report_period => 3,
+			pgstattuple_schema_name => undef,
+			pages_per_round_divisor => 1,
+			pages_before_vacuum_lower_divisor => 16,
+			pages_before_vacuum_lower_threshold => 1000,
+			pages_before_vacuum_upper_divisor => 50,
+			max_retry_count => 2,
+			@_);
+	};
+}
+
+sub test_dry_run : Test(8) {
+	my $self = shift;
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		dry_run => 1);
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 1;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'has_special_triggers');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+	ok($table_compactor->is_processed());
+}
+
+sub test_check_special_triggers : Test(12) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}->{'has_special_triggers'}->
+	{'row_list'} = [[1]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->();
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 1;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'vacuum');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'has_special_triggers');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+	ok($table_compactor->is_processed());
+}
+
+sub test_no_initial_vacuum : Test(6) {
+	my $self = shift;
+
+	splice(
+		@{$self->{'database'}->{'mock'}->{'data_hash'}
+		  ->{'get_size_statistics'}->{'row_list_sequence'}},
+		1, 1);
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		no_initial_vacuum => 1);
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 1;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'has_special_triggers');
+}
+
+sub test_analyze_if_not_analyzed : Test(15) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'} = [
+		[[undef, undef, undef]],
+		@{$self->{'database'}->{'mock'}->{'data_hash'}
+		  ->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}}];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->();
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 1;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'vacuum');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'analyze');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'has_special_triggers');
+	ok($table_compactor->is_processed());
+}
+
+sub test_can_not_get_bloat_statistics : Test(14) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'} = [
+		[[undef, undef, undef]],
+		[[undef, undef, undef]]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->();
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 1;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'vacuum');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'analyze');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+	ok($table_compactor->is_processed());
+}
+
+sub test_min_page_count : Test(12) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[1] =
+		[[35000, 42000, 99, 120]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->();
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 1;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'vacuum');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'has_special_triggers');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+	ok($table_compactor->is_processed());
+}
+
+sub test_min_free_percent : Test(12) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[0] =
+		[[85, 14, 5000]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->();
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 1;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'vacuum');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'has_special_triggers');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+	ok($table_compactor->is_processed());
+}
+
+sub test_force_processing : Test(12) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[1] =
+		[[35000, 42000, 99, 120]];
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[2] =
+		[[35000, 42000, 92, 108]];
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[0] =
+		[[85, 14, 5000]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(force => 1);
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 1;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'vacuum');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'has_special_triggers');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_column');
+}
+
+sub test_main_processing : Test(20) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[2] =
+		[[35000, 42000, 88, 108]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->();
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 6;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_column');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_max_tupples_per_page');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'clean_pages', to_page => 99);
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'clean_pages', to_page => 94);
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'vacuum');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'clean_pages', to_page => 87);
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'clean_pages', to_page => 84);
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'vacuum');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+}
+
+sub test_main_processing_no_routine_vacuum : Test(16) {
+	my $self = shift;
+
+	splice(
+		@{$self->{'database'}->{'mock'}->{'data_hash'}
+		  ->{'get_size_statistics'}->{'row_list_sequence'}},
+		2, 1);
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		no_routine_vacuum => 1);
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 6;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_column');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_max_tupples_per_page');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'clean_pages', to_page => 99);
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'clean_pages', to_page => 94);
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'clean_pages', to_page => 89);
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'clean_pages', to_page => 84);
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'vacuum');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+}
+
+sub test_reindex_if_last_attempt_and_not_processed : Test(19) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[3] =
+		[[35000, 42000, 92, 110]];
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[4] =
+		[[35000, 42000, 92, 110]];
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[2] =
+		[[85, 7, 1500]];
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[3] =
+		[[85, 7, 1500]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		reindex => 1);
+
+	$table_compactor->process(attempt => 2);
+
+	my $i = 15;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'analyze');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_index_data_list');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'reindex1');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'alter_index1');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'reindex2');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'alter_index2');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+}
+
+sub test_reindex_if_not_last_attempt_and_processed : Test(19) {
+	my $self = shift;
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		reindex => 1);
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 15;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'analyze');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_index_data_list');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'reindex1');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'alter_index1');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'reindex2');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'alter_index2');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+}
+
+sub test_no_reindex_if_not_last_attempt_and_not_processed : Test(7) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[3] =
+		[[35000, 42000, 92, 110]];
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[4] =
+		[[35000, 42000, 92, 110]];
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[2] =
+		[[85, 7, 1500]];
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[3] =
+		[[85, 7, 1500]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		reindex => 1);
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 15;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'analyze');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+}
+
+sub test_reindex_queries_if_last_attempt_and_not_processed : Test(9) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[3] =
+		[[35000, 42000, 92, 110]];
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[4] =
+		[[35000, 42000, 92, 110]];
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[2] =
+		[[85, 7, 1500]];
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[3] =
+		[[85, 7, 1500]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		print_reindex_queries => 1);
+
+	$table_compactor->process(attempt => 2);
+
+	my $i = 15;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'analyze');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_index_data_list');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+}
+
+sub test_reindex_queries_if_not_last_attempt_and_processed : Test(9) {
+	my $self = shift;
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		print_reindex_queries => 1);
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 15;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'analyze');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_index_data_list');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+}
+
+sub test_no_reindex_queries_if_not_last_attempt_and_not_processed : Test(7) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[3] =
+		[[35000, 42000, 92, 110]];
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[4] =
+		[[35000, 42000, 92, 110]];
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[2] =
+		[[85, 7, 1500]];
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[3] =
+		[[85, 7, 1500]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		print_reindex_queries => 1);
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 15;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'analyze');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+}
+
+sub test_no_reindex_if_in_min_free_percent : Test(19) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_index_statistics'}->{'row_list_sequence'}->[1] = [[1000, 14, 140]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		pgstattuple_schema_name => 'public',
+		reindex => 1);
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 15;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'analyze');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_pgstattuple_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_index_data_list');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_index_statistics', name => 'table_pkey');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'reindex1');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'alter_index1');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_index_statistics', name => 'table_idx2');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+}
+
+sub test_reindex_if_in_min_free_percent_and_forced : Test(19) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_index_statistics'}->{'row_list_sequence'}->[1] = [[1000, 14, 140]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		pgstattuple_schema_name => 'public',
+		reindex => 1,
+		force => 1);
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 15;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'analyze');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_pgstattuple_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_index_data_list');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'reindex1');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'alter_index1');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'reindex2');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'alter_index2');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+}
+
+sub test_no_reindex_queries_if_in_min_free_percent : Test(13) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_index_statistics'}->{'row_list_sequence'}->[1] = [[1000, 14, 140]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		pgstattuple_schema_name => 'public',
+		print_reindex_queries => 1);
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 15;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'analyze');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_pgstattuple_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_index_data_list');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_index_statistics', name => 'table_pkey');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_index_statistics', name => 'table_idx2');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+}
+
+sub test_reindex_queries_if_in_min_free_percent_and_forced : Test(9) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_index_statistics'}->{'row_list_sequence'}->[1] = [[1000, 14, 140]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		pgstattuple_schema_name => 'public',
+		print_reindex_queries => 1,
+		force => 1);
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 15;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'analyze');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_pgstattuple_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_index_data_list');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+}
+
+sub test_loops_count : Test(4) {
+	my $self = shift;
+
+	splice(@{$self->{'database'}->{'mock'}->{'data_hash'}->{'clean_pages'}->
+			 {'row_list_sequence'}}, 3, 1);
+
+	for (my $i = 0; $i < 97; $i++) {
+		push(@{$self->{'database'}->{'mock'}->{'data_hash'}->{'clean_pages'}->
+			   {'row_list_sequence'}},
+			 [[84]]);
+	}
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->();
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 109;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'clean_pages', to_page => 84);
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'vacuum');
+}
+
+sub test_processed : Test {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[3] =
+		[[35000, 42000, 91, 108]];
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[4] =
+		[[35000, 42000, 91, 108]];
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[3] =
+		[[85, 6, 1400]];
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[2] =
+		[[85, 6, 1400]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->();
+
+	$table_compactor->process(attempt => 1);
+
+	ok($table_compactor->is_processed());
+}
+
+sub test_not_processed : Test {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[3] =
+		[[35000, 42000, 92, 110]];
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[4] =
+		[[35000, 42000, 92, 110]];
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[3] =
+		[[85, 7, 1500]];
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[2] =
+		[[85, 7, 1500]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->();
+
+	$table_compactor->process(attempt => 1);
+
+	ok(not $table_compactor->is_processed());
+}
+
+sub test_get_pgstattuple_bloat_statistics : Test(2) {
+	my $self = shift;
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		pgstattuple_schema_name => 'public');
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 4;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_pgstattuple_bloat_statistics');
+}
+
+sub test_no_final_analyze : Test(5) {
+	my $self = shift;
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		no_final_analyze => 1);
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 15;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_approximate_bloat_statistics');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+}
+
+sub test_stop_processing_on_deadlock_detected : Test(7) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}->{'clean_pages'}->
+	{'row_list_sequence'}->[0] = 'deadlock detected';
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[3] =
+		[[35000, 42000, 100, 120]];
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[2] =
+		[[85, 15, 5000]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->();
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 8;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'clean_pages', to_page => 99);
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'vacuum');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	ok(not $table_compactor->is_processed());
+}
+
+sub test_stop_processing_on_cannot_extract_system_attribute : Test(7) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}->{'clean_pages'}->
+	{'row_list_sequence'}->[0] = 'cannot extract system attribute';
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_size_statistics'}->{'row_list_sequence'}->[3] =
+		[[35000, 42000, 100, 120]];
+
+	$self->{'database'}->{'mock'}->{'data_hash'}
+	->{'get_approximate_bloat_statistics'}->{'row_list_sequence'}->[2] =
+		[[85, 15, 5000]];
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->();
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 8;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'clean_pages', to_page => 99);
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'vacuum');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'get_size_statistics');
+	ok(not $table_compactor->is_processed());
+}
+
+sub test_stop_processing_on_relation_does_not_exist : Test(4) {
+	my $self = shift;
+
+	$self->{'database'}->{'mock'}->{'data_hash'}->{'vacuum'}
+	->{'row_list'} = 'relation "schema.table" does not exist';
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->();
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 2;
+
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, 'vacuum');
+	$self->{'database'}->{'mock'}->is_called(
+		$i++, undef);
+	ok($table_compactor->is_processed());
+}
+
+sub test_get_size_delta : Test {
+	my $self = shift;
+
+	my $size = (
+		$self->{'database'}->{'mock'}->{'data_hash'}->{'get_size_statistics'}->
+		{'row_list_sequence'}->[0]->[0]->[0] -
+		$self->{'database'}->{'mock'}->{'data_hash'}->{'get_size_statistics'}->
+		{'row_list_sequence'}->[4]->[0]->[0]);
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->();
+
+	$table_compactor->process(attempt => 1);
+
+	is($table_compactor->get_size_delta(), $size);
+}
+
+sub test_get_total_size_delta : Test {
+	my $self = shift;
+
+	my $size = (
+		$self->{'database'}->{'mock'}->{'data_hash'}->{'get_size_statistics'}->
+		{'row_list_sequence'}->[0]->[0]->[1] -
+		$self->{'database'}->{'mock'}->{'data_hash'}->{'get_size_statistics'}->
+		{'row_list_sequence'}->[4]->[0]->[1]);
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->();
+
+	$table_compactor->process(attempt => 1);
+
+	is($table_compactor->get_total_size_delta(), $size);
+}
+
+sub test_delay_and_proggress_1 : Test(12) {
+	my $self = shift;
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->();
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 1;
+
+	$table_compactor->{'mock'}->is_called(
+		$i++, 'sleep', 1.5);
+	$table_compactor->{'mock'}->is_called(
+		$i++, 'log_progress');
+	$table_compactor->{'mock'}->is_called(
+		$i++, 'sleep', 1.5);
+	$table_compactor->{'mock'}->is_called(
+		$i++, 'log_progress');
+	$table_compactor->{'mock'}->is_called(
+		$i++, 'sleep', 1.5);
+	$table_compactor->{'mock'}->is_called(
+		$i++, 'log_progress');
+}
+
+sub test_delay_and_proggress_2 : Test(8) {
+	my $self = shift;
+
+	my $table_compactor = $self->{'table_compactor_constructor'}->(
+		delay_constant => 2,
+		delay_ratio => 1,
+		progress_report_period => 5);
+
+	$table_compactor->process(attempt => 1);
+
+	my $i = 1;
+
+	$table_compactor->{'mock'}->is_called(
+		$i++, 'sleep', 3);
+	$table_compactor->{'mock'}->is_called(
+		$i++, 'sleep', 3);
+	$table_compactor->{'mock'}->is_called(
+		$i++, 'log_progress');
+	$table_compactor->{'mock'}->is_called(
+		$i++, 'sleep', 3);
+}
+
+1;
+
+package PgToolkit::Compactor::TableStub;
+
+use base qw(PgToolkit::Compactor::Table);
+
+use strict;
+use warnings;
+
+use Test::MockObject;
+use Test::More;
+
+sub init {
+	my $self = shift;
+
+	$self->SUPER::init(@_);
+
+	$self->{'mock'} = Test::MockObject->new();
+
+	$self->{'mock'}->mock(
+		'-is_called',
+		sub {
+			my ($self, $pos, $name, @arg_list) = @_;
+
+			is($self->call_pos($pos), $name);
+			is_deeply([$self->call_args($pos)], [$self, @arg_list]);
+		});
+
+	$self->{'mock'}->set_true('log_progress');
+	$self->{'mock'}->set_true('sleep');
+	$self->{'mock'}->set_series('-time', 1 .. 1000);
+
+	return;
+}
+
+sub _sleep {
+	return shift->{'mock'}->sleep(@_);
+}
+
+sub _time {
+	return shift->{'mock'}->time();
+}
+
+sub _log_progress {
+	my ($self, %arg_hash) = @_;
+
+	$self->{'mock'}->log_progress();
+
+	return $self->SUPER::_log_progress(%arg_hash);
+}
+
+1;
