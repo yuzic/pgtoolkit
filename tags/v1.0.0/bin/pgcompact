@@ -1,0 +1,360 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use PgToolkit::Registry::Compactor;
+
+=head1 NAME
+
+B<pgcompact> - PostgreSQL bloat reducing tool.
+
+=head1 SYNOPSIS
+
+pgcompact [OPTION...]
+
+=over 4
+
+=item General options:
+
+[-?mV] [(-q | -v LEVEL)]
+
+=item Connection options:
+
+[-h HOST] [-p PORT] [-U USER] [-W PASSWD] [-P PATH]
+
+=item Targeting options:
+
+(-a | -d DBNAME...) [-n SCHEMA...] [-t TABLE...] [-D DBNAME...]
+[-N SCHEMA...] [-T TABLE...]
+
+
+=item Behavioural options:
+
+[-IRLSCrsfu] [-c PAGES] [-e SECONDS] [-E RATIO] [-o COUNT] [-x PAGES]
+[-y RATIO] [-z SECONDS]
+
+=back
+
+=head1 DESCRIPTION
+
+B<pgcompact> is a tool to reduce bloat for tables and indexes without
+heavy locks.
+
+Initially the tool is an automation of the solutions proposed in these
+publications:
+
+=over 4
+
+=item L<Reducing bloat without locking|http://blog.endpoint.com/2010/09/reducing-bloat-without-locking.html>
+
+by Joshua Tolley (on End Point's blog)
+
+=item L<Reduce bloat of table without long/exclusive locks|http://depesz.com/index.php/2010/10/17/reduce-bloat-of-table-without-longexclusive-locks>
+
+by Hubert Lubaczewski (aka Depesz).
+
+=back
+
+If pgstattuple is installed B<pgcompact> uses it to get a better
+statistics. It is highly recommended to be for TOASTed tables and
+indexes.
+
+=head2 Usage examples
+
+Shows usage manual.
+
+	pgcompact --man
+
+Compacts all the bloated tables in all the database in the cluster
+plus their bloated indexes. Prints additional progress information.
+
+	pgcompact --all --reindex --verbose info
+
+Compacts all the bloated tables in the billing database and their
+bloated indexes excepts ones that are in the pgq schema.
+
+	pgcompact --dbname billing --exclude-schema pgq --reindex
+
+=head1 OPTIONS
+
+=head2 General options
+
+=over 4
+
+=item B<-?>
+
+=item B<--help>
+
+Display short help.
+
+=item B<-m>
+
+=item B<--man>
+
+Display full manual.
+
+=item B<-V>
+
+=item B<--version>
+
+Print version.
+
+=item B<-q>
+
+=item B<--quiet>
+
+Do not display progress messages. The same as C<-v warning>.
+
+=item B<-v> LEVEL
+
+=item B<--verbosity> LEVEL
+
+A verbosity level. One of C<error>, C<warning>, C<notice>, C<info>,
+C<debug0> and C<debug1>. By default C<notice>.
+
+=back
+
+=head2 Connection options
+
+The B<pgcompact> tries to connect to the database with the DBI Perl
+module using either DBD::Pg or DBD::PgPP driver first. If it fails the
+utility tries to work via psql using bidirectional communications.
+
+If some of the connection options is not specified the tool tries to
+get it from C<PGHOST>, C<PGPORT>, C<PGUSER>, C<PGPASSWORD> environment
+variables. If password is still unknown after that than it tries to
+get it from the password file that C<PGPASSFILE> refers to and if this
+file does not exist it tries to get it from C<HOME/.pgpass> file.
+
+=over 4
+
+=item B<-h> HOST
+
+=item B<--host> HOST
+
+A database host. By default C<localhost>.
+
+=item B<-p> PORT
+
+=item B<--port> PORT
+
+A database port. By default C<5432>.
+
+=item B<-U> USER
+
+=item B<--user> USER
+
+A database user. By default current system user is used (as returned
+by whoami).
+
+=item B<-W> PASSWD
+
+=item B<--password> PASSWD
+
+A password for the user.
+
+=item B<-P> PATH
+
+=item B<--path-to-psql> PATH
+
+A path to the psql program. By default C<psql>.
+
+=back
+
+=head2 Targeting options
+
+Note that if you specified a database, schema or table that is not in
+the cluster it will be ignored. Redundant exclusions will be ignored
+too. All these options except C<--all> can be specified several times.
+
+=over 4
+
+=item B<-a>
+
+=item B<--all>
+
+Process all the databases in the cluster.
+
+=item B<-d> DBNAME
+
+=item B<--dbname> DBNAME
+
+A database to process. By default all the user databses of the
+instance are processed.
+
+=item B<-D> DBNAME
+
+=item B<--exclude-dbname> DBNAME
+
+A database to exclude from processing.
+
+=item B<-n> SCHEMA
+
+=item B<--schema> SCHEMA
+
+A schema to process. By default all the schemas of the specified
+database are processed.
+
+=item B<-N> SCHEMA
+
+=item B<--exclude-schema> SCHEMA
+
+A schema to exclude from processing.
+
+=item B<-t> TABLE
+
+=item B<--table> TABLE
+
+A table to process. By default all the tables of the specified schema
+are processed.
+
+=item B<-T> TABLE
+
+=item B<--exclude-table> TABLE
+
+A table to exclude from processing.
+
+=back
+
+=head2 Options controlling the behaviour
+
+=over 4
+
+=item B<-u>
+
+=item B<--dry-run>
+
+Print statistics only, without affecting any data.
+
+=item B<-I>
+
+=item B<--no-initial-vacuum>
+
+=item B<-R>
+
+=item B<--no-routine-vacuum>
+
+Turn off the initial/routine vacuum. By default all the vacuums are
+on. Final vacuum can not be turned off.
+
+=item B<-L>
+
+=item B<--no-final-analyze>
+
+Turn off the final analyze. By default the final analyze is performed.
+
+=item B<-S>
+
+=item B<--no-pgstattuple>
+
+Do not use pgstattuple even if it is installed. By default is off.
+
+=item B<-C>
+
+=item B<--system-catalog>
+
+Warning! This feature is experimental, use at your own risk.
+
+Allow tables from system catalog to be processed as well. It does not
+process pg_indexes, as it txid dependant. By default it is off.
+
+=item B<-r>
+
+=item B<--reindex>
+
+Reindex tables after processing.
+
+=item B<-s>
+
+=item B<--print-reindex-queries>
+
+Print reindex queries. Useful if you want to perform manual
+reindex later.
+
+=item B<-f>
+
+=item B<--force>
+
+Try to compact even those tables and indexes that do not meet minimal
+bloat requirements.
+
+=item B<-c> PAGES
+
+=item B<--max-pages-per-round> PAGES
+
+An upper threshold of pages to process per round. By default it is 10.
+
+=item B<-e> SECONDS
+
+=item B<--delay-constant> SECONDS
+
+A constant part of the delay between rounds in seconds. By default it
+is 0.
+
+=item B<-E> RATIO
+
+=item B<--delay-ratio> RATIO
+
+A dynamic part of the delay between rounds is calculated as
+previous-round-time * delay-ratio. By default 2.
+
+=item B<-o> COUNT
+
+=item B<--max-retry-count> COUNT
+
+A maximum number of retries in case of unsuccessful processing. By
+default 10.
+
+=item B<-x> COUNT
+
+=item B<--min-page-count> COUNT
+
+A minumum pages number required to be in a table or index for
+processing. By default it is 10.
+
+=item B<-y> RATIO
+
+=item B<--min-free-percent> RATIO
+
+A minimum free space percent required to be in a table or index for
+processing. By default it is 20.
+
+=item B<-z> SECONDS
+
+=item B<--progress-report-period> SECONDS
+
+An interval in seconds to report the progress. Default is 60 seconds.
+
+=back
+
+=cut
+
+sub main {
+	PgToolkit::Registry::Compactor->new()->get_cluster_compactor()->process();
+}
+
+if (__PACKAGE__ eq 'main') {
+	main();
+}
+
+1;
+
+=head1 LICENSE AND COPYRIGHT
+
+Copyright (c) 2011-2013 Sergey Konoplev, Maxim Boguk
+
+PgToolkit is released under the PostgreSQL License, read COPYRIGHT.md
+for additional information.
+
+=head1 AUTHOR
+
+=over 4
+
+=item L<Sergey Konoplev|mailto:gray.ru@gmail.com>
+
+=item L<Maxim Boguk|mailto:maxim.boguk@gmail.com>
+
+=back
+
+=cut

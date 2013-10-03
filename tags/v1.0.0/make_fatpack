@@ -1,0 +1,41 @@
+#!/bin/bash
+#
+# A script to make packed with dependencies versions of tools.
+#
+# Makes autonomous Perl scripts with the fatpack utility
+# (App::FatPacker) and archive them in pgtoolkit-vX-fatpack.tar.gz.
+#
+# The TAG argument is required. The script is assumed to be run in the
+# repository root.
+#
+# Copyright (c) 2011-2013 Sergey Konoplev
+
+BIN_DIR='./bin'
+FATPACK_DIR='./fatpack'
+PERL='/usr/bin/perl'
+
+if [ $# -ne 1 ]; then
+    echo "Usage: make_files TAG" >&2
+    exit 1
+fi
+
+script_list=$(ls -1 $BIN_DIR)
+
+# Fatpack the scripts
+find $FATPACK_DIR -type f -delete
+mkdir fatlib
+for script in $script_list; do
+    (echo "#!$PERL"; fatpack file; cat $BIN_DIR/$script) \
+	> $FATPACK_DIR/$script 2> /dev/null
+    chmod 755 $FATPACK_DIR/$script
+    echo $FATPACK_DIR/$script
+done
+rm -rf fatlib
+
+# Archive the fatpacked scripts and remove them
+fatpack_targz=pgtoolkit-$1-fatpack.tar.gz
+(
+    cd $FATPACK_DIR/
+    tar -czf $fatpack_targz *
+    echo $FATPACK_DIR/$fatpack_targz    
+)
